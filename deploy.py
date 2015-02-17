@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 
-import sys, os, subprocess, tempfile, argparse, contextlib
+import sys, os, re, subprocess, tempfile, argparse, contextlib
 
 
 def log(msg, *args):
@@ -10,6 +10,10 @@ def log(msg, *args):
 class UserError(Exception):
 	def __init__(self, msg, *args):
 		super().__init__(msg.format(*args))
+
+
+def num_sort_key(str):
+	return re.sub('[0-9]+', lambda x: '%s0%s' % ('1' * len(x.group()), x.group()), str)
 
 
 def command(*args, cwd = None, output = False, exit_code = False):
@@ -159,6 +163,8 @@ def main():
 			release_checkout_dir = os.path.join(temp_dir, 'release_checkout')
 			revision = 'refs/tags/{}'.format(args.release)
 			
+			log('Deploying version {} ...', args.release)
+			
 			os.mkdir(release_checkout_dir)
 			git_checkout(project_repo, release_checkout_dir, 'HEAD')
 			maven(release_checkout_dir, 'package') # Try to package the project in a separate step so that we fail before a tag is potentially created.
@@ -185,8 +191,10 @@ def main():
 		git_clone(project_repo, project_repo_clone)
 		
 		for i, x in enumerate(args.revisions):
-			deploy_checkout_dir = os.path.join(temp_dir, 'deploy_checkout_{}'.format(i))
+			deploy_checkout_dir = os.path.join(temp_dir, 'project_checkout_{}'.format(i))
 			version = git_name_rev(project_repo_clone, x)
+			
+			log('Deploying version {} ...', version)
 			
 			os.mkdir(deploy_checkout_dir)
 			git_checkout(project_repo_clone, deploy_checkout_dir, x)
@@ -194,7 +202,7 @@ def main():
 			maven_deploy(deploy_checkout_dir, deploy_repo_checkout)
 			versions.append(version)
 		
-		git_commit_all(deploy_repo_clone, deploy_repo_checkout, 'Deployment of {} {}.'.format('versions' if len(versions) > 1 else 'version', ', '.join(versions)))
+		git_commit_all(deploy_repo_clone, deploy_repo_checkout, 'Deployment of {} {}.'.format('versions' if len(versions) > 1 else 'version', ', '.join(sorted(versions, key = num_sort_key))))
 		git_push(deploy_repo_clone, deploy_repo, ('HEAD', args.branch))
 		git_push(deploy_repo, 'origin', args.branch)
 	
