@@ -167,6 +167,7 @@ def main():
 			
 			revisions.append(revision)
 		
+		project_repo_clone = os.path.join(temp_dir, 'project_repo')
 		deploy_repo_clone = os.path.join(temp_dir, 'deploy_repo')
 		deploy_repo_checkout = os.path.join(temp_dir, 'deploy_checkout')
 		versions = []
@@ -180,12 +181,15 @@ def main():
 		else:
 			git_init(deploy_repo_clone)
 		
+		# Clone the repository so we can check it out without the index getting messed up.
+		git_clone(project_repo, project_repo_clone)
+		
 		for i, x in enumerate(args.revisions):
 			deploy_checkout_dir = os.path.join(temp_dir, 'deploy_checkout_{}'.format(i))
-			version = git_name_rev(project_repo, x)
+			version = git_name_rev(project_repo_clone, x)
 			
 			os.mkdir(deploy_checkout_dir)
-			git_checkout(project_repo, deploy_checkout_dir, x)
+			git_checkout(project_repo_clone, deploy_checkout_dir, x)
 			maven_versions_set(deploy_checkout_dir, version)
 			maven_deploy(deploy_checkout_dir, deploy_repo_checkout)
 			versions.append(version)
