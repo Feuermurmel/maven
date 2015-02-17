@@ -1,4 +1,4 @@
-#! /usr/bin/env python3.3
+#! /usr/bin/env python3
 
 import sys, os, subprocess, tempfile, argparse, contextlib
 
@@ -7,31 +7,36 @@ def log(msg, *args):
 	print('{}: {}'.format(os.path.basename(sys.argv[0]), msg.format(*args)), file = sys.stderr)
 
 
-def strip_prefix(str, prefix):
-	assert str.startswith(prefix)
-	
-	return str[len(prefix):]
+class UserError(Exception):
+	def __init__(self, msg, *args):
+		super().__init__(msg.format(*args))
 
 
 def command(*args, cwd = None, output = False, exit_code = False):
 	stdout = subprocess.PIPE if output else None
 	stderr = subprocess.PIPE if exit_code else None
-	proc = subprocess.Popen(args, cwd = cwd, stdout = stdout, stderr = stderr)
-	out, _ = proc.communicate()
+	process = subprocess.Popen(args, cwd = cwd, stdout = stdout, stderr = stderr)
+	out, _ = process.communicate()
 	
 	if exit_code:
-		return proc.returncode
+		return process.returncode
 	else:
-		if proc.returncode:
-			raise Exception('Command failed with exit status {}: {}'.format(proc.returncode, ' '.join(args)))
+		if process.returncode:
+			raise UserError('Command failed with exit status {}: {}', process.returncode, ' '.join(args))
 		
 		return out
 
 
 def maven(dir, goal, **properties):
-	properties = ['-D{}={}'.format(k, v) for k, v in properties.items()]
+	def iter_args():
+		yield 'mvn'
+		
+		for k, v in properties.items():
+			yield '-D{}={}'.format(k, v)
+		
+		yield goal
 	
-	command('mvn', goal, *properties, cwd = dir)
+	command(*iter_args(), cwd = dir)
 
 
 def maven_versions_set(dir, version):
@@ -39,28 +44,30 @@ def maven_versions_set(dir, version):
 
 
 def maven_deploy(dir, deploy_dir):
-	options = { 'altDeploymentRepository': '-::default::file://{}'.format(os.path.abspath(deploy_dir)), 'maven.test.skip': 'true' }
-	
-	maven(dir, 'deploy', **options)
+	maven(dir, 'deploy', **{ 'altDeploymentRepository': '-::default::file://{}'.format(os.path.abspath(deploy_dir)), 'maven.test.skip': 'true' })
 
 
 def git(*args, git_dir = None, work_tree = None, output = False, exit_code = False, cwd = None):
-	options = [('git-dir', git_dir), ('work-tree', work_tree)]
-	args = ['--{}={}'.format(k, v) for k, v in options if v] + list(args)
+	def iter_args():
+		yield 'git'
+		
+		for k, v in ('git-dir', git_dir), ('work-tree', work_tree):
+			if v:
+				yield '--{}={}'.format(k, v)
+		
+		yield from args
 	
-	return command('git', *args, output = output, exit_code = exit_code, cwd = cwd)
+	return command(*iter_args(), output = output, exit_code = exit_code, cwd = cwd)
 
 
 def git_get_repo(dir):
-	path, = git('rev-parse', '--git-dir', cwd=dir, output=True).decode().splitlines()
+	path, = git('rev-parse', '--git-dir', cwd = dir, output = True).decode().splitlines()
 	
 	return os.path.join(dir, path)
 
 
-def git_name_rev(repo, rev, prefix = 'release/'):
-	pattern = '{}*'.format(prefix)
-	
-	res, = git('name-rev', '--no-undefined', '--name-only', '--tags', '--refs={}'.format(pattern), rev, git_dir = repo, output = True).decode().splitlines()
+def git_name_rev(repo, rev):
+	res, = git('name-rev', '--no-undefined', '--name-only', '--tags', rev, git_dir = repo, output = True).decode().splitlines()
 	
 	# Strip eventual '^0' suffix used on tags by newer versions of Git.
 	res, *rest = res.rsplit('^', 1)
@@ -70,7 +77,7 @@ def git_name_rev(repo, rev, prefix = 'release/'):
 		
 		assert rest == '0'
 	
-	return strip_prefix(res, prefix)
+	return res
 
 
 def git_tag(repo, tag, rev):
@@ -113,14 +120,18 @@ def git_ref_exists(repo, ref):
 
 
 def parse_args():
-	parser = argparse.ArgumentParser(description = 'Deploy the project to a separate branch in the repository which hosts this script.')
+	parser = argparse.ArgumentParser(description = 'Deploy the project Maven project in the current working directory to the branch gh-pages in the repository which hosts this script.')
+	parser.add_argument('revisions', nargs = '*', default = ['HEAD'], help = 'Revisions to deploy.')
+	parser.add_argument('--release', metavar = 'version', default = None, help = 'Automatically create a tag for the current HEAD with this version number and push it to the remote `origin\'.')
+	parser.add_argument('--branch', default = 'gh-pages', help = 'Branch to use as the Maven repository. Defaults to `gh-pages\'')
 	parser.add_argument('--debug', action = 'store_true', help = 'Place temporary files in the current working directory and do not clean them up.')
-	parser.add_argument('--branch', default = 'mvn-repo', help = 'Branch to use as the Maven repository. Defaults to "mvn-repo"')
-	parser.add_argument('--release', metavar = 'version', default = None, help = 'Automatically create tag with this version number before deploying it.')
-	parser.add_argument('--push', action = 'store_true', help = 'Automatically push the repository branch to the remote "origin". If used with --relase, the created tag is also pushed.')
-	parser.add_argument('revision', nargs = '?', default = 'HEAD', help = 'Revision to deploy.')
+
+	args = parser.parse_args()
 	
-	return parser.parse_args()
+	if not args.revisions and not args.release:
+		raise UserError('At least one revision to deploy or --release must be specified.')
+	
+	return args
 
 
 @contextlib.contextmanager
@@ -139,44 +150,56 @@ def make_temp_dir(debug):
 
 def main():
 	args = parse_args()
-	repo = git_get_repo(os.getcwd())
-	version = args.release if args.release else git_name_rev(repo, args.revision)
+	project_repo = git_get_repo(os.getcwd())
+	deploy_repo = git_get_repo(os.path.dirname(os.path.abspath(__file__)))
+	revisions = args.revisions
 	
 	with make_temp_dir(args.debug) as temp_dir:
-		work_dir = os.path.join(temp_dir, 'work')
-		deploy_dir = os.path.join(temp_dir, 'repo')
-		deploy_repo = os.path.join(temp_dir, 'git')
-		refs_to_push = [args.branch]
-		
-		os.mkdir(work_dir)
-		os.mkdir(deploy_dir)
-		
-		git_checkout(repo, work_dir, args.revision)
-		maven_versions_set(work_dir, version)
-		maven(work_dir, 'package') # Try to package the project in a separate step so that we fail before a tag is potentially created.
-		
 		if args.release:
-			release_tag = 'release/{}'.format(version)
-			refs_to_push.append(release_tag)
+			release_checkout_dir = os.path.join(temp_dir, 'release_checkout')
+			revision = 'refs/tags/{}'.format(args.release)
 			
-			git_tag(repo, release_tag, args.revision)
+			os.mkdir(release_checkout_dir)
+			git_checkout(project_repo, release_checkout_dir, 'HEAD')
+			maven(release_checkout_dir, 'package') # Try to package the project in a separate step so that we fail before a tag is potentially created.
+			git_tag(project_repo, args.release, 'HEAD')
+			git_push(project_repo, 'origin', revision)
+			
+			revisions.append(revision)
 		
-		if git_ref_exists(repo, args.branch):
-			git_clone(repo, deploy_repo)
-			git_checkout(deploy_repo, deploy_dir, args.branch)
-			git_reset(deploy_repo, args.branch)
+		deploy_repo_clone = os.path.join(temp_dir, 'deploy_repo')
+		deploy_repo_checkout = os.path.join(temp_dir, 'deploy_checkout')
+		versions = []
+		
+		if git_ref_exists(deploy_repo, args.branch):
+			git_clone(deploy_repo, deploy_repo_clone)
+			git_checkout(deploy_repo_clone, deploy_repo_checkout, args.branch)
+			git_reset(deploy_repo_clone, args.branch)
 		else:
-			git_init(deploy_repo)
+			git_init(deploy_repo_clone)
 		
-		maven_deploy(work_dir, deploy_dir)
+		for i, x in enumerate(args.revisions):
+			deploy_checkout_dir = os.path.join(temp_dir, 'deploy_checkout_{}'.format(i))
+			version = git_name_rev(project_repo, x)
+			
+			os.mkdir(deploy_checkout_dir)
+			git_checkout(project_repo, deploy_checkout_dir, x)
+			maven_versions_set(deploy_checkout_dir, version)
+			maven_deploy(deploy_checkout_dir, deploy_repo_checkout)
+			versions.append(version)
 		
-		git_commit_all(deploy_repo, deploy_dir, 'Deployment of version {}.'.format(version))
-		git_push(deploy_repo, repo, ('HEAD', args.branch))
-		
-		if args.push:
-			git_push(repo, 'origin', *refs_to_push)
+		git_commit_all(deploy_repo_clone, deploy_repo_checkout, 'Deployment of {} {}.'.format('versions' if len(versions) > 1 else 'version', ', '.join(versions)))
+		git_push(deploy_repo_clone, deploy_repo, ('HEAD', args.branch))
+		git_push(deploy_repo, 'origin', args.branch)
 	
-	print('The project was successfully deployed.')
+	print('Deployment was successful.')
 
 
-main()
+try:
+	main()
+except UserError as e:
+	log('Error: {}', e)
+	sys.exit(1)
+except KeyboardInterrupt:
+	log('Operation interrupted.')
+	sys.exit(2)
