@@ -85,7 +85,7 @@ def git_tag(repo, tag, rev):
 
 
 def git_checkout(repo, work_tree, rev):
-	git('checkout', rev, '.', git_dir= repo, work_tree = work_tree)
+	git('checkout', rev, '.', git_dir = repo, work_tree = work_tree)
 
 
 def git_reset(repo, rev):
@@ -170,6 +170,8 @@ def main():
 		deploy_repo_clone = os.path.join(temp_dir, 'deploy_repo')
 		deploy_repo_checkout = os.path.join(temp_dir, 'deploy_checkout')
 		versions = []
+		
+		os.mkdir(deploy_repo_checkout)
 		
 		if git_ref_exists(deploy_repo, args.branch):
 			git_clone(deploy_repo, deploy_repo_clone)
