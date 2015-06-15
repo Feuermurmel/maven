@@ -109,6 +109,10 @@ def git_commit_all(repo, work_tree, message):
 	git('commit', '--message={}'.format(message), git_dir = repo, work_tree = work_tree)
 
 
+def git_fetch(dst_repo, src_repo):
+	git('fetch', src_repo, git_dir = dst_repo)
+
+
 def git_push(src_repo, dst_repo, *refs):
 	def refs_fn(ref):
 		if isinstance(ref, str):
@@ -178,6 +182,7 @@ def main():
 		deploy_repo_checkout = os.path.join(temp_dir, 'deploy_checkout')
 		versions = []
 		
+		git_fetch(deploy_repo, 'origin')
 		os.mkdir(deploy_repo_checkout)
 		
 		if git_ref_exists(deploy_repo, args.branch):
