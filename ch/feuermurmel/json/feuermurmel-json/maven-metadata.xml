@@ -3,7 +3,7 @@
   <groupId>ch.feuermurmel.json</groupId>
   <artifactId>feuermurmel-json</artifactId>
   <versioning>
-    <release>0.2.8</release>
+    <release>0.3.0</release>
     <versions>
       <version>0.2.6</version>
       <version>0.1.0</version>
@@ -19,7 +19,8 @@
       <version>0.2.5</version>
       <version>0.2.7</version>
       <version>0.2.8</version>
+      <version>0.3.0</version>
     </versions>
-    <lastUpdated>20150615123334</lastUpdated>
+    <lastUpdated>20180325163354</lastUpdated>
   </versioning>
 </metadata>
